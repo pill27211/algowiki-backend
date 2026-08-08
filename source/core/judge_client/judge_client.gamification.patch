@@ -1,0 +1,70 @@
+--- a/core/judge_client/judge_client.cc (hustoj upstream)
++++ b/core/judge_client/judge_client.cc (AlgoWiki)
+@@ -879,14 +884,45 @@
+ 	}
+ }
+ #ifdef _mysql_h
++
++#include "update_stat.h"
++#include "ac_api.h"
+ /* write result back to database */
++
++
++void tag_table_synchronization(MYSQL * conn, int solution_id, int accept)
++{
++	MYSQL_RES * result = NULL;
++	MYSQL_ROW row = NULL;
++
++	char query[1001] = {};
++	sprintf(query, "select problem_id, source from problem where problem_id = (select problem_id from solution where solution_id = %d)", solution_id);
++	mysql_real_query(conn, query, strlen(query));
++	result = mysql_store_result(conn);
++
++	if(result == NULL) return;
++	row = mysql_fetch_row(result);
++
++	int problem_id = atoi(row[0]);
++	string str = row[1] ? string(row[1]) : "";
++	
++	stringstream ss(str);
++	for (string s; ss >> s;)
++	{
++		sprintf(query, "update %s set accepted = accepted + %d, submit = (select submit from problem where problem_id = %d) where problem_id = %d", s.c_str(), accept, problem_id, problem_id);
++		mysql_real_query(conn, query, strlen(query));
++	}
++
++	mysql_free_result(result);
++}
++
+ void _update_solution_mysql(int solution_id, int result, int time, int memory,
+ 							int sim, int sim_s_id, double pass_rate)
+ {
+ 	char sql[BUFFER_SIZE];
+ 	char judger[BUFFER_SIZE/10];
+ 	mysql_real_escape_string(conn, judger, http_username, strlen(http_username));
+-	
++
+ 	if (oi_mode) {
+ 		sprintf(sql,
+ 				"UPDATE %s SET result=%d,time=%d,memory=%d,pass_rate=%f,judger='%s',judgetime=now() WHERE solution_id=%d ",
+@@ -897,10 +933,20 @@
+ 					tbname,     result, time, memory,judger, solution_id);
+ 	}
+ 	//      printf("sql= %s\n",sql);
++
++	//submit, accepted 반영이 problem 테이블에만 되는 게 아니라 해당 문제의 태그별 테이블에도 반영하기 위함.
++	tag_table_synchronization(conn, solution_id, result == 4);
++
++	if(result == 4)
++	{
++		main_stat_process(conn, solution_id, time, memory);
++		ac_api_process(conn, solution_id);
++	}
+ 	if (mysql_real_query(conn, sql, strlen(sql)))
+ 	{
+ 		//              printf("..update failed! %s\n",mysql_error(conn));
+ 	}
++
+ 	if (sim)
+ 	{
+ 		sprintf(sql,
